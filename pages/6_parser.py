@@ -7,6 +7,29 @@ import replicate
 from openai import OpenAI
 from typing import List, Dict
 
+from fatsecret import Fatsecret
+import requests
+
+CONSUMER_KEY = st.secrets["CONSUMER_KEY"]
+CONSUMER_SECRET = st.secrets["CONSUMER_SECRET"]
+
+
+fs = Fatsecret(CONSUMER_KEY, CONSUMER_SECRET)
+
+def get_ingredients(dish_name: str) -> List[str]:
+    recipes = fs.recipes_search(dish_name)[:5]  # Limit to first 5 recipes
+    all_ingredients = []
+
+    # Iterate through each recipe and collect ingredient descriptions
+    for recipe in recipes:
+        recipe_info = fs.recipe_get(recipe['recipe_id'])
+        if 'ingredients' in recipe_info and 'ingredient' in recipe_info['ingredients']:
+            for ingredient in recipe_info['ingredients']['ingredient']:
+                if 'ingredient_description' in ingredient:
+                    all_ingredients.append(ingredient['ingredient_description'])
+
+    return all_ingredients
+
 client = OpenAI(
     base_url=st.secrets["AZURE_API_BASE"],
     api_key=st.secrets["OPENAI_API_KEY"],
@@ -62,6 +85,20 @@ prompt = """Provide your answer in JSON structure like this: {
 """
 
 if file:
+    # Add multiple dietary restriction selector before the parse button
+    dietary_options = [
+        "Vegan",
+        "Vegetarian",
+        "Gluten-Free",
+        "Lactose-Free",
+        "Nut-Free"
+    ]
+    selected_diets = st.multiselect(
+        "Select your dietary restrictions",
+        dietary_options,
+        default=None,
+        help="You can select multiple restrictions"
+    )
     
     if st.button('Parse Uploaded pdf file (Powered by AI)'):
 
@@ -128,16 +165,49 @@ if file:
             # Start grid container
             st.write('<div class="cards-grid">', unsafe_allow_html=True)
             
-            ingredients = []
             # Create cards
             for key, dish in data.items():
+                # Get ingredients from Fatsecret
+                if dish['ingredients'] == "":
+                    dish['ingredients'] = get_ingredients(dish['dish_name'])
+                # Analyze ingredients for dietary restrictions
+                dietary_analysis = json.loads(analyze_ingredients([dish['ingredients']]))
+                
+                # Skip this dish if it doesn't meet ANY of the selected dietary restrictions
+                should_display = True
+                if selected_diets:
+                    for diet in selected_diets:
+                        restriction_key = f"{diet}-Friendly" if diet in ["Vegan", "Vegetarian"] else diet
+                        if not dietary_analysis.get(restriction_key, True):
+                            should_display = False
+                            break
+                
+                if not should_display:
+                    continue
+                
+                # Get warnings from dietary analysis
+                warnings = dietary_analysis.get('Warnings', [])
+                warnings_html = ""
+                if warnings:
+                    warnings_html = "<p><strong>⚠️ Warnings:</strong><br>"
+                    warnings_html += "<br>".join(f"• {warning}" for warning in warnings)
+                    warnings_html += "</p>"
+                
                 card_html = f"""
                     <div class="dish-card">
                         <div class="dish-content">
                             <h3>{dish['dish_name']}</h3>
                             <p><strong>Ingredients:</strong><br>{dish['ingredients']}</p>
                             <p><strong>Price:</strong> {dish['price']}</p>
+                            <p><strong>Dietary Info:</strong><br>
+                            {'✅ Vegan' if dietary_analysis.get('Vegan-Friendly') else '❌ Not Vegan'}<br>
+                            {'✅ Vegetarian' if dietary_analysis.get('Vegetarian-Friendly') else '❌ Not Vegetarian'}<br>
+                            {'✅ Gluten-Free' if dietary_analysis.get('Gluten-Free') else '❌ Contains Gluten'}<br>
+                            {'✅ Lactose-Free' if dietary_analysis.get('Lactose-Free') else '❌ Contains Lactose'}<br>
+                            {'✅ Nut-Free' if dietary_analysis.get('Nut-Free') else '❌ Contains Nuts'}</p>
+                            {warnings_html}
                         </div>
+                    </div>
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
                 
@@ -160,12 +230,8 @@ if file:
                         generated_img_url = str(output[0])
                         st.image(generated_img_url, use_container_width=True)
                 
-                # get ingredients
-                result = analyze_ingredients(dish['ingredients'])
-                st.write(result)
-                
-                # Close card div
-                st.markdown('</div>', unsafe_allow_html=True)
+                # # Close card div
+                # st.markdown('</div>', unsafe_allow_html=True)
             
             # Close grid container
             st.write('</div>', unsafe_allow_html=True)
