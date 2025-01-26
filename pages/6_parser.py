@@ -105,8 +105,15 @@ def analyze_ingredients(ingredients: List[str]) -> Dict:
     
     return response.choices[0].message.content
 
+st.subheader("DishIQ - Your personal dining assistant at your fingertips")
 
-file = st.file_uploader('Choose your .pdf file to upload', type="pdf")
+
+st.write("""
+    Powered by AI to help you find the best dishes for your dietary needs.
+""")
+
+
+file = st.file_uploader('Upload your menu as PDF to get started!', type="pdf")
 
 st.session_state.uploaded_file = file
 
