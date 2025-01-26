@@ -204,7 +204,7 @@ if file:
             # Create cards
             for key, dish in data.items():
                 # Get ingredients from Fatsecret
-                if dish['ingredients'] == "" or dish["dish_name"] == "Gyoza":
+                if dish['ingredients'] == "":
                     try:
                         dish['ingredients'] = get_ingredients(dish['dish_name'])
                     except Exception as e:
