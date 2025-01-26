@@ -10,14 +10,28 @@ from typing import List, Dict
 from fatsecret import Fatsecret
 import requests
 
+import os
+
+
 CONSUMER_KEY = st.secrets["CONSUMER_KEY"]
 CONSUMER_SECRET = st.secrets["CONSUMER_SECRET"]
 
 
 fs = Fatsecret(CONSUMER_KEY, CONSUMER_SECRET)
 
+ingredient_client = OpenAI(
+    base_url=st.secrets["AZURE_API_BASE"],
+    api_key=st.secrets["OPENAI_API_KEY"],
+)
+
 def get_ingredients(dish_name: str) -> List[str]:
-    recipes = fs.recipes_search(dish_name)[:5]  # Limit to first 5 recipes
+    try:
+        recipes = fs.recipes_search(dish_name)[:5]  # Limit to first 5 recipes
+    except Exception as e:
+        error_message = f'Error getting recipes (search): {str(e)}\n'
+        os.write(1, error_message.encode('utf-8'))
+        return """Warnings: Could not get ingredients"""
+
     all_ingredients = []
 
     # Iterate through each recipe and collect ingredient descriptions
@@ -28,7 +42,27 @@ def get_ingredients(dish_name: str) -> List[str]:
                 if 'ingredient_description' in ingredient:
                     all_ingredients.append(ingredient['ingredient_description'])
 
-    return all_ingredients
+    # Send to OpenAI API to process ingredients
+    prompt = """Here is a list of ingredients with measurements. Please return only the ingredient names 
+    (no measurements or amounts) and remove any duplicates. Return as a simple comma-separated list:
+
+    {}""".format(all_ingredients)
+
+    try:
+        response = ingredient_client.chat.completions.create(
+            model="gpt-4o",  # or your specific Azure model name
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+    except Exception as e:
+        error_message = f'Error getting ingredients (openai): {str(e)}\n'
+        os.write(1, error_message.encode('utf-8'))
+        return """Warning: Could not process ingredients"""
+
+    cleaned_ingredients = response.choices[0].message.content
+
+    return cleaned_ingredients
 
 client = OpenAI(
     base_url=st.secrets["AZURE_API_BASE"],
@@ -55,19 +89,21 @@ def analyze_ingredients(ingredients: List[str]) -> Dict:
 
     ingredients_text = ", ".join(ingredients)
     
-    response = client.chat.completions.create(
-        model="gpt-4o", # or your specific Azure model name
-        messages=[
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o", # or your specific Azure model name
+            messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Analyze these ingredients: {ingredients_text}"}
         ],
-        response_format={ "type": "json_object" }
-    )
+            response_format={ "type": "json_object" }
+        )
+    except Exception as e:
+        error_message = f'Error analyzing ingredients: {str(e)}\n'
+        os.write(1, error_message.encode('utf-8'))
+        return """{"Warnings": ["Could not analyze ingredients"]}"""
     
     return response.choices[0].message.content
-
-
-
 
 
 file = st.file_uploader('Choose your .pdf file to upload', type="pdf")
@@ -168,8 +204,11 @@ if file:
             # Create cards
             for key, dish in data.items():
                 # Get ingredients from Fatsecret
-                if dish['ingredients'] == "":
-                    dish['ingredients'] = get_ingredients(dish['dish_name'])
+                if dish['ingredients'] == "" or dish["dish_name"] == "Gyoza":
+                    try:
+                        dish['ingredients'] = get_ingredients(dish['dish_name'])
+                    except Exception as e:
+                        st.write(f"Error getting ingredients for {dish['dish_name']}: {e}")
                 # Analyze ingredients for dietary restrictions
                 dietary_analysis = json.loads(analyze_ingredients([dish['ingredients']]))
                 
@@ -187,7 +226,7 @@ if file:
                 
                 # Get warnings from dietary analysis
                 warnings = dietary_analysis.get('Warnings', [])
-                warnings_html = ""
+                warnings_html = "<p></p>"
                 if warnings:
                     warnings_html = "<p><strong>⚠️ Warnings:</strong><br>"
                     warnings_html += "<br>".join(f"• {warning}" for warning in warnings)
