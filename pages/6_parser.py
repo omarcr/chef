@@ -19,10 +19,6 @@ CONSUMER_SECRET = st.secrets["CONSUMER_SECRET"]
 
 fs = Fatsecret(CONSUMER_KEY, CONSUMER_SECRET)
 
-ingredient_client = OpenAI(
-    base_url=st.secrets["AZURE_API_BASE"],
-    api_key=st.secrets["OPENAI_API_KEY"],
-)
 
 def get_ingredients(dish_name: str) -> List[str]:
     try:
@@ -64,13 +60,9 @@ def get_ingredients(dish_name: str) -> List[str]:
 
     return cleaned_ingredients
 
-client = OpenAI(
-    base_url=st.secrets["AZURE_API_BASE"],
-    api_key=st.secrets["OPENAI_API_KEY"],
-)
 
-def analyze_ingredients(ingredients: List[str]) -> Dict:
-    system_prompt = """You are a dietary restriction analyzer. Given a list of ingredients, determine if the recipe is:
+def analyze_ingredients(ingredients: List[str], name: str) -> Dict:
+    system_prompt = """You are a dietary restriction analyzer. Given a list of ingredients and dish name, determine if the recipe is:
     - Vegan (no animal products)
     - Vegetarian (no meat but may include dairy/eggs)
     - Gluten-free
@@ -94,7 +86,7 @@ def analyze_ingredients(ingredients: List[str]) -> Dict:
             model="gpt-4o", # or your specific Azure model name
             messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Analyze these ingredients: {ingredients_text}"}
+            {"role": "user", "content": f"For the dish {name}, analyze these ingredients: {ingredients_text}"}
         ],
             response_format={ "type": "json_object" }
         )
@@ -107,6 +99,23 @@ def analyze_ingredients(ingredients: List[str]) -> Dict:
 
 st.subheader("DishIQ - Your personal dining assistant at your fingertips")
 
+# Add settings section with API key input
+with st.expander("Settings"):
+    user_api_key = st.text_input(
+        "OpenAI API Key",
+        type="password",
+        placeholder="Enter your OpenAI API key here",
+        help="Enter your OpenAI API key. This will override the default key.",
+        value=st.session_state.get('user_api_key', '')
+    )
+    
+    if user_api_key:
+        ingredient_client = OpenAI(api_key=user_api_key)
+        client = OpenAI(api_key=user_api_key)
+    else:
+        # Use default key from secrets
+        ingredient_client = OpenAI(base_url=st.secrets["AZURE_API_BASE"],api_key=st.secrets["OPENAI_API_KEY"])
+        client = OpenAI(base_url=st.secrets["AZURE_API_BASE"],api_key=st.secrets["OPENAI_API_KEY"])
 
 st.write("""
     Powered by AI to help you find the best dishes for your dietary needs.
@@ -147,7 +156,8 @@ if file:
 
         
         doc_parsed = LlamaParse(result_type="markdown",api_key= st.secrets["LLAMA_CLOUD_API_KEY"],
-                                complemental_formatting_instruction=prompt
+                                complemental_formatting_instruction=prompt,
+                                content_guideline_instruction="this is a MENU from a restaraunt"
                                 ).load_data(st.session_state.uploaded_file.getvalue(), extra_info={"file_name": "_"})
         
         # Display raw parsed text for debugging
@@ -217,7 +227,7 @@ if file:
                     except Exception as e:
                         st.write(f"Error getting ingredients for {dish['dish_name']}: {e}")
                 # Analyze ingredients for dietary restrictions
-                dietary_analysis = json.loads(analyze_ingredients([dish['ingredients']]))
+                dietary_analysis = json.loads(analyze_ingredients([dish['ingredients']], dish['dish_name']))
                 
                 # Skip this dish if it doesn't meet ANY of the selected dietary restrictions
                 should_display = True
@@ -285,10 +295,3 @@ if file:
         except json.JSONDecodeError as e:
             st.error(f"Error parsing JSON: {str(e)}")
             st.write("Please make sure the parsed text is in valid JSON format")
-
-
-
-        # doc_parsed = LlamaParse(result_type="markdown",api_key=key_input,
-        #                         parsing_instruction=parsingInstruction
-        #                     ).load_data(st.session_state.uploaded_file.getvalue(), 
-        #                                 extra_info={"file_name": "_"})
